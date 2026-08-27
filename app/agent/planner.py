@@ -2,11 +2,14 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 
 from app.agent.state import AgentState
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 llm = ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash",
-    temperature=0,
+    model="gemini-3.6-flash",
+    
 )
 
 
@@ -57,9 +60,20 @@ def planner_node(state: AgentState):
 
     response = llm.invoke(prompt)
 
+    content = response.content
+
+    if isinstance(content, list):
+        text = "".join(
+            block.get("text", "")
+            for block in content
+            if isinstance(block, dict)
+        )
+    else:
+        text = content
+
     plan = [
         line.strip()
-        for line in response.content.splitlines()
+        for line in text.splitlines()
         if line.strip()
     ]
 
