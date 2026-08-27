@@ -1,42 +1,45 @@
+from typing import Any
+
 from sqlalchemy import text
 
 from app.db.database import engine
 
 
-def execute_sql(query: str) -> str:
+def execute_sql(query: str) -> dict[str, Any]:
     """
     Execute a read-only SQL query against the operational database.
     """
 
     query = query.strip()
 
-    # Basic safety check
+    if not query:
+        return {
+            "success": False,
+            "error": "Query cannot be empty."
+        }
+
     if not query.lower().startswith("select"):
-        return "Error: Only SELECT queries are allowed."
+        return {
+            "success": False,
+            "error": "Only SELECT queries are allowed."
+        }
 
     try:
         with engine.connect() as connection:
             result = connection.execute(text(query))
 
-            rows = result.fetchall()
+            columns = list(result.keys())
+            rows = [dict(row._mapping) for row in result]
 
-            if not rows:
-                return "Query returned no results."
-
-            columns = result.keys()
-
-            output = []
-
-            # Header
-            output.append(" | ".join(columns))
-
-            # Rows
-            for row in rows:
-                output.append(
-                    " | ".join(str(value) for value in row)
-                )
-
-            return "\n".join(output)
+            return {
+                "success": True,
+                "columns": columns,
+                "rows": rows,
+                "row_count": len(rows),
+            }
 
     except Exception as e:
-        return f"SQL execution error: {str(e)}"
+        return {
+            "success": False,
+            "error": str(e),
+        }
