@@ -4,6 +4,7 @@ from app.agent.planner import planner_node
 state = {
     "question": "Why has SLA performance deteriorated recently?",
     "investigation_plan": [],
+    "current_step": 0,
     "evidence": [],
     "analysis": "",
     "recommendation": "",

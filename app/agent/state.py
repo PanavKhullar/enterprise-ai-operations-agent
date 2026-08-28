@@ -1,22 +1,18 @@
-from typing import TypedDict, List, Dict, Any
+from typing import TypedDict
 
 
 class AgentState(TypedDict):
 
-    # Original question from the user
     question: str
 
-    # Investigation plan created by the agent
-    investigation_plan: List[str]
+    investigation_plan: list[str]
 
-    # Results returned by tools
-    evidence: List[Dict[str, Any]]
+    current_step: int
 
-    # Final root-cause analysis
+    evidence: list[dict]
+
     analysis: str
 
-    # Recommended action
     recommendation: str
 
-    # Human approval status
     approved: bool
