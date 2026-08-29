@@ -1,7 +1,7 @@
 from app.agent.sql_generator import generate_sql
 
 
-question = "Why are SLA breaches increasing from the past week?"
+question = " Which warehouse had the highest average delay last week?"
 
 step = "Compare SLA breaches in the recent 7 days with the previous 7 days."
 
