@@ -4,6 +4,7 @@ from typing import Any
 from sqlalchemy import text
 
 from app.db.database import readonly_engine
+from app.agent.sql_validator import validate_sql
 
 # Hard cap on rows returned to the agent, to bound token cost/latency
 # and avoid dumping huge result sets into the LLM context.
@@ -20,30 +21,20 @@ def execute_sql(query: str) -> dict[str, Any]:
     """
     Execute a read-only SQL query against the operational database.
 
-    Safety is enforced in two layers:
-    1. App-level check: query must be a single SELECT statement.
-    2. DB-level: connection uses the `ops_readonly` role, which only
+    Safety is enforced in three layers:
+    1. App-level check: `validate_sql` strips markdown fences, requires
+       a single SELECT/WITH statement, and blocks forbidden keywords.
+    2. Row cap + statement timeout: bound cost/latency of the query.
+    3. DB-level: connection uses the `ops_readonly` role, which only
        has SELECT privileges, so even a bypassed check can't write.
     """
 
-    query = query.strip().rstrip(";")
-
-    if not query:
+    try:
+        query = validate_sql(query)
+    except ValueError as e:
         return {
             "success": False,
-            "error": "Query cannot be empty."
-        }
-
-    if ";" in query:
-        return {
-            "success": False,
-            "error": "Multiple statements are not allowed."
-        }
-
-    if not query.lower().startswith("select"):
-        return {
-            "success": False,
-            "error": "Only SELECT queries are allowed."
+            "error": str(e),
         }
 
     if not _LIMIT_RE.search(query):
