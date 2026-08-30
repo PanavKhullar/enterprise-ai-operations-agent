@@ -1,11 +1,23 @@
+import httpx
 from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 load_dotenv()
 
 llm = ChatGoogleGenerativeAI(
     model="gemini-3.6-flash",
 )
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.RemoteProtocolError, httpx.ReadTimeout, httpx.ConnectError)),
+    stop=stop_after_attempt(4),
+    wait=wait_exponential(multiplier=1, min=2, max=20),
+    reraise=True,
+)
+def _invoke_llm(prompt: str):
+    return llm.invoke(prompt)
 
 
 def generate_sql(question: str, investigation_step: str) -> str:
@@ -68,7 +80,7 @@ Rules:
 - Return ONLY the SQL query.
 """
 
-    response = llm.invoke(prompt)
+    response = _invoke_llm(prompt)
 
     content = response.content
 

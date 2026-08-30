@@ -17,3 +17,11 @@ print("\nInvestigation Plan:\n")
 
 for step in result["investigation_plan"]:
     print(step)
+
+print("\n\n=== EVIDENCE ===\n")
+for item in result.get("evidence", []):
+    print(item)
+    print("---")
+
+print("\n\n=== ANALYSIS ===\n")
+print(result.get("analysis", "<no analysis produced>"))

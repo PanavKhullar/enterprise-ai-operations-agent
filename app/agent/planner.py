@@ -1,5 +1,7 @@
+import httpx
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from app.agent.state import AgentState
 from dotenv import load_dotenv
@@ -9,8 +11,18 @@ load_dotenv()
 
 llm = ChatGoogleGenerativeAI(
     model="gemini-3.6-flash",
-    
+
 )
+
+
+@retry(
+    retry=retry_if_exception_type((httpx.RemoteProtocolError, httpx.ReadTimeout, httpx.ConnectError)),
+    stop=stop_after_attempt(4),
+    wait=wait_exponential(multiplier=1, min=2, max=20),
+    reraise=True,
+)
+def _invoke_llm(prompt):
+    return llm.invoke(prompt)
 
 
 planner_prompt = ChatPromptTemplate.from_messages([
@@ -58,7 +70,7 @@ def planner_node(state: AgentState):
         "question": question
     })
 
-    response = llm.invoke(prompt)
+    response = _invoke_llm(prompt)
 
     content = response.content
 
