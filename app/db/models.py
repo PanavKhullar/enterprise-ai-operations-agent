@@ -6,6 +6,9 @@ from sqlalchemy import (
     Float,
     DateTime,
     ForeignKey,
+    JSON,
+    Text,
+    func,
 )
 
 from sqlalchemy.orm import Mapped, mapped_column
@@ -125,4 +128,31 @@ class SLAEvent(Base):
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime
+    )
+
+
+class Investigation(Base):
+    """Persisted record of a past agent investigation run."""
+
+    __tablename__ = "investigations"
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        autoincrement=True,
+    )
+
+    question: Mapped[str] = mapped_column(Text)
+
+    investigation_plan: Mapped[dict] = mapped_column(JSON)
+
+    evidence: Mapped[dict] = mapped_column(JSON)
+
+    analysis: Mapped[str] = mapped_column(Text)
+
+    recommendation: Mapped[str] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.now(),
     )
