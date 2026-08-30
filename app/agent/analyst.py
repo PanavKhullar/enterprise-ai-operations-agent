@@ -78,11 +78,13 @@ def analyst_node(state):
 
     question = state["question"]
     evidence = state.get("evidence", [])
+    hypotheses = state.get("hypotheses", [])
 
     if not evidence:
         return {"analysis": "No evidence was collected, so no analysis could be produced."}
 
     evidence_text = _format_evidence(evidence)
+    hypotheses_text = "\n".join(hypotheses) if hypotheses else "(none generated)"
 
     prompt = f"""
 You are a senior operations analyst reviewing an automated investigation.
@@ -90,13 +92,18 @@ You are a senior operations analyst reviewing an automated investigation.
 Original question:
 {question}
 
+Candidate hypotheses formed before evidence was collected (unverified guesses,
+to be confirmed, refined, or discarded based on the evidence below):
+{hypotheses_text}
+
 Below is the evidence gathered during the investigation, in order. Each item
 contains the investigation step, the SQL query that was run, and its result.
 
 {evidence_text}
 
-Write a concise root-cause analysis based ONLY on this evidence. Do not
-invent data that is not present above.
+Write a concise root-cause analysis based ONLY on this evidence. State which
+of the candidate hypotheses above are supported, partially supported, or
+contradicted by the evidence. Do not invent data that is not present above.
 
 Structure your answer as:
 1. Summary of what was found (1-2 sentences).

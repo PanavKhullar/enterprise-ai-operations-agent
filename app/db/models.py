@@ -146,6 +146,8 @@ class Investigation(Base):
 
     investigation_plan: Mapped[dict] = mapped_column(JSON)
 
+    hypotheses: Mapped[dict] = mapped_column(JSON, nullable=True)
+
     evidence: Mapped[dict] = mapped_column(JSON)
 
     analysis: Mapped[str] = mapped_column(Text)

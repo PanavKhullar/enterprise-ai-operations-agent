@@ -4,6 +4,7 @@ from app.agent.graph import agent
 initial_state = {
     "question": "Why has SLA performance deteriorated recently?",
     "investigation_plan": [],
+    "hypotheses": [],
     "current_step": 0,
     "evidence": [],
     "analysis": "",
@@ -17,6 +18,10 @@ print("\nInvestigation Plan:\n")
 
 for step in result["investigation_plan"]:
     print(step)
+
+print("\n\n=== HYPOTHESES ===\n")
+for h in result.get("hypotheses", []):
+    print(h)
 
 print("\n\n=== EVIDENCE ===\n")
 for item in result.get("evidence", []):

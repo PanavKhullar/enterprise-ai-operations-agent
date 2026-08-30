@@ -7,6 +7,8 @@ class AgentState(TypedDict):
 
     investigation_plan: list[str]
 
+    hypotheses: list[str]
+
     current_step: int
 
     evidence: list[dict]

@@ -19,6 +19,7 @@ def history_node(state):
         record = Investigation(
             question=state.get("question", ""),
             investigation_plan=state.get("investigation_plan", []),
+            hypotheses=state.get("hypotheses", []),
             evidence=json.loads(json.dumps(state.get("evidence", []), default=str)),
             analysis=state.get("analysis", ""),
             recommendation=state.get("recommendation", ""),
