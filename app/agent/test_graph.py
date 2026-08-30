@@ -8,6 +8,9 @@ initial_state = {
     "current_step": 0,
     "evidence": [],
     "analysis": "",
+    "confidence": 0.0,
+    "hypothesis_evaluations": [],
+    "citations": [],
     "recommendation": "",
     "approved": False,
 }
@@ -30,3 +33,14 @@ for item in result.get("evidence", []):
 
 print("\n\n=== ANALYSIS ===\n")
 print(result.get("analysis", "<no analysis produced>"))
+
+print("\n\n=== CONFIDENCE ===\n")
+print(result.get("confidence"))
+
+print("\n\n=== HYPOTHESIS EVALUATIONS ===\n")
+for h in result.get("hypothesis_evaluations", []):
+    print(h)
+
+print("\n\n=== CITATIONS ===\n")
+for c in result.get("citations", []):
+    print(c)

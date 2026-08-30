@@ -152,6 +152,12 @@ class Investigation(Base):
 
     analysis: Mapped[str] = mapped_column(Text)
 
+    confidence: Mapped[float] = mapped_column(Float, nullable=True)
+
+    hypothesis_evaluations: Mapped[dict] = mapped_column(JSON, nullable=True)
+
+    citations: Mapped[dict] = mapped_column(JSON, nullable=True)
+
     recommendation: Mapped[str] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(

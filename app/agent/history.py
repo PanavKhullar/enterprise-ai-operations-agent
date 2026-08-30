@@ -22,6 +22,9 @@ def history_node(state):
             hypotheses=state.get("hypotheses", []),
             evidence=json.loads(json.dumps(state.get("evidence", []), default=str)),
             analysis=state.get("analysis", ""),
+            confidence=state.get("confidence"),
+            hypothesis_evaluations=state.get("hypothesis_evaluations", []),
+            citations=state.get("citations", []),
             recommendation=state.get("recommendation", ""),
         )
 

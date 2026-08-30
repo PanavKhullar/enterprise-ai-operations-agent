@@ -58,12 +58,32 @@ def _format_evidence(evidence: list[dict]) -> str:
             result_summary = f"ERROR: {result.get('error')}"
 
         blocks.append(
-            f"Step {i}: {item.get('step')}\n"
+            f"[evidence_id={i}] Step {i}: {item.get('step')}\n"
             f"SQL: {item.get('sql')}\n"
             f"Result: {result_summary}"
         )
 
     return "\n\n".join(blocks)
+
+
+def _extract_json(text: str) -> dict:
+    """Extract a JSON object from LLM output, tolerating markdown code fences."""
+
+    cleaned = text.strip()
+
+    if cleaned.startswith("```"):
+        cleaned = cleaned.strip("`")
+        if cleaned.lower().startswith("json"):
+            cleaned = cleaned[4:]
+        cleaned = cleaned.strip()
+
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+
+    if start == -1 or end == -1:
+        raise ValueError(f"No JSON object found in LLM output: {text!r}")
+
+    return json.loads(cleaned[start : end + 1])
 
 
 def analyst_node(state):
@@ -81,7 +101,12 @@ def analyst_node(state):
     hypotheses = state.get("hypotheses", [])
 
     if not evidence:
-        return {"analysis": "No evidence was collected, so no analysis could be produced."}
+        return {
+            "analysis": "No evidence was collected, so no analysis could be produced.",
+            "confidence": 0.0,
+            "hypothesis_evaluations": [],
+            "citations": [],
+        }
 
     evidence_text = _format_evidence(evidence)
     hypotheses_text = "\n".join(hypotheses) if hypotheses else "(none generated)"
@@ -97,26 +122,64 @@ to be confirmed, refined, or discarded based on the evidence below):
 {hypotheses_text}
 
 Below is the evidence gathered during the investigation, in order. Each item
-contains the investigation step, the SQL query that was run, and its result.
+is tagged with an [evidence_id=N] and contains the investigation step, the
+SQL query that was run, and its result.
 
 {evidence_text}
 
-Write a concise root-cause analysis based ONLY on this evidence. State which
-of the candidate hypotheses above are supported, partially supported, or
-contradicted by the evidence. Do not invent data that is not present above.
+Write a concise root-cause analysis based ONLY on this evidence. Do not
+invent data that is not present above.
 
-Structure your answer as:
-1. Summary of what was found (1-2 sentences).
-2. Key contributing factors/dimensions (e.g. specific warehouses, carriers,
-   regions, service levels) that stand out, with the supporting numbers.
-3. Most likely root cause(s).
+Respond with ONLY a single JSON object (no markdown fences, no extra text),
+matching exactly this schema:
 
-Keep it factual and grounded in the query results. If the evidence is
-inconclusive or contains errors, say so explicitly.
+{{
+  "analysis": "<string: 1) summary of what was found, 2) key contributing "
+              "factors/dimensions with supporting numbers, 3) most likely "
+              "root cause(s). Reference evidence using [evidence_id=N] "
+              "inline where a claim is backed by specific evidence.>",
+  "confidence": <float 0.0-1.0: overall confidence in the root-cause "
+                "analysis, based on how directly and completely the "
+                "evidence supports the conclusion>,
+  "hypothesis_evaluations": [
+    {{
+      "hypothesis": "<original hypothesis text>",
+      "verdict": "<supported | partially_supported | contradicted | inconclusive>",
+      "evidence_ids": [<int, ...>],
+      "explanation": "<short justification>"
+    }}
+  ],
+  "citations": [
+    {{
+      "claim": "<short paraphrase of a specific claim made in the analysis>",
+      "evidence_ids": [<int, ...>]
+    }}
+  ]
+}}
+
+If the evidence is inconclusive or contains errors, reflect that with a low
+confidence score and say so explicitly in the analysis text. Include one
+entry in "hypothesis_evaluations" per candidate hypothesis given above (skip
+this list if none were generated).
 """
 
     response = _invoke_llm(prompt)
 
-    analysis = _extract_text(response.content)
+    raw_text = _extract_text(response.content)
 
-    return {"analysis": analysis}
+    try:
+        parsed = _extract_json(raw_text)
+    except (ValueError, json.JSONDecodeError):
+        return {
+            "analysis": raw_text,
+            "confidence": 0.0,
+            "hypothesis_evaluations": [],
+            "citations": [],
+        }
+
+    return {
+        "analysis": parsed.get("analysis", raw_text),
+        "confidence": float(parsed.get("confidence", 0.0)),
+        "hypothesis_evaluations": parsed.get("hypothesis_evaluations", []),
+        "citations": parsed.get("citations", []),
+    }

@@ -15,6 +15,12 @@ class AgentState(TypedDict):
 
     analysis: str
 
+    confidence: float
+
+    hypothesis_evaluations: list[dict]
+
+    citations: list[dict]
+
     recommendation: str
 
     approved: bool
