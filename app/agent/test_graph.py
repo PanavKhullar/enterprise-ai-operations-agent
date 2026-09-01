@@ -44,3 +44,6 @@ for h in result.get("hypothesis_evaluations", []):
 print("\n\n=== CITATIONS ===\n")
 for c in result.get("citations", []):
     print(c)
+
+print("\n\n=== RECOMMENDATION ===\n")
+print(result.get("recommendation", "<no recommendation produced>"))
