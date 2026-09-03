@@ -3,6 +3,8 @@ from typing import TypedDict
 
 class AgentState(TypedDict):
 
+    thread_id: str
+
     question: str
 
     investigation_plan: list[str]
@@ -24,3 +26,9 @@ class AgentState(TypedDict):
     recommendation: str
 
     approved: bool
+
+    action_name: str
+
+    action_params: dict
+
+    action_result: dict

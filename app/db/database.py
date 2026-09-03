@@ -15,6 +15,12 @@ READONLY_DATABASE_URL = (
     "ops_readonly:ops_readonly_password@localhost:5432/ops_db"
 )
 
+# Plain psycopg (v3) DSN — no SQLAlchemy driver prefix — used by
+# PostgresSaver (LangGraph checkpointing) which talks to psycopg directly.
+CHECKPOINTER_DATABASE_URL = (
+    "postgresql://ops_user:ops_password@localhost:5432/ops_db"
+)
+
 
 class Base(DeclarativeBase):
     pass

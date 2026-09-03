@@ -17,6 +17,7 @@ def history_node(state):
 
     try:
         record = Investigation(
+            thread_id=state.get("thread_id", ""),
             question=state.get("question", ""),
             investigation_plan=state.get("investigation_plan", []),
             hypotheses=state.get("hypotheses", []),
@@ -26,6 +27,9 @@ def history_node(state):
             hypothesis_evaluations=state.get("hypothesis_evaluations", []),
             citations=state.get("citations", []),
             recommendation=state.get("recommendation", ""),
+            approved=state.get("approved", False),
+            action_name=state.get("action_name", ""),
+            action_result=state.get("action_result", {}),
         )
 
         session.add(record)

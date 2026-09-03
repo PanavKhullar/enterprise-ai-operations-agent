@@ -4,6 +4,7 @@ from sqlalchemy import (
     String,
     Integer,
     Float,
+    Boolean,
     DateTime,
     ForeignKey,
     JSON,
@@ -142,6 +143,8 @@ class Investigation(Base):
         autoincrement=True,
     )
 
+    thread_id: Mapped[str] = mapped_column(String(64), nullable=True, index=True)
+
     question: Mapped[str] = mapped_column(Text)
 
     investigation_plan: Mapped[dict] = mapped_column(JSON)
@@ -159,6 +162,12 @@ class Investigation(Base):
     citations: Mapped[dict] = mapped_column(JSON, nullable=True)
 
     recommendation: Mapped[str] = mapped_column(Text, nullable=True)
+
+    approved: Mapped[bool] = mapped_column(Boolean, nullable=True)
+
+    action_name: Mapped[str] = mapped_column(String(100), nullable=True)
+
+    action_result: Mapped[dict] = mapped_column(JSON, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
