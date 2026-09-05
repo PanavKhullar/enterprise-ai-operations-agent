@@ -1,10 +1,18 @@
+import uuid
+
 from langgraph.types import Command
 
 from app.agent.graph import agent
 
+# A fresh thread_id per run is required: node_timings uses an operator.add
+# reducer and the graph is checkpointed in Postgres by thread_id, so
+# reusing a fixed thread_id across script runs causes each new run's
+# node_timings to be appended onto every previous run's entries instead
+# of starting clean, silently corrupting the latency measurement.
+thread_id = f"test-graph-run-{uuid.uuid4()}"
 
 initial_state = {
-    "thread_id": "test-graph-run",
+    "thread_id": thread_id,
     "question": "Why has SLA performance deteriorated recently?",
     "investigation_plan": [],
     "hypotheses": [],
@@ -19,9 +27,10 @@ initial_state = {
     "action_name": "",
     "action_params": {},
     "action_result": {},
+    "node_timings": [],
 }
 
-config = {"configurable": {"thread_id": "test-graph-run"}}
+config = {"configurable": {"thread_id": thread_id}}
 
 result = agent.invoke(initial_state, config=config)
 
@@ -83,3 +92,7 @@ print("action_params:", result.get("action_params"))
 
 print("\n\n=== ACTION RESULT ===\n")
 print(result.get("action_result", "<no action result>"))
+
+print("\n\n=== NODE TIMINGS ===\n")
+for t in result.get("node_timings", []):
+    print(t)

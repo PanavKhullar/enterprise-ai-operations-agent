@@ -5,6 +5,7 @@ from langgraph.checkpoint.postgres import PostgresSaver
 
 from app.agent.state import AgentState
 from app.db.database import CHECKPOINTER_DATABASE_URL
+from app.agent.timing import timed_node
 from app.agent.planner import planner_node
 from app.agent.hypothesis import hypothesis_node
 from app.agent.investigator import investigator_node
@@ -19,14 +20,14 @@ def build_graph():
 
     graph = StateGraph(AgentState)
 
-    graph.add_node("planner", planner_node)
-    graph.add_node("hypothesis", hypothesis_node)
-    graph.add_node("investigator", investigator_node)
-    graph.add_node("analyst", analyst_node)
-    graph.add_node("recommender", recommender_node)
-    graph.add_node("approval", approval_node)
-    graph.add_node("action", action_node)
-    graph.add_node("history", history_node)
+    graph.add_node("planner", timed_node("planner")(planner_node))
+    graph.add_node("hypothesis", timed_node("hypothesis")(hypothesis_node))
+    graph.add_node("investigator", timed_node("investigator")(investigator_node))
+    graph.add_node("analyst", timed_node("analyst")(analyst_node))
+    graph.add_node("recommender", timed_node("recommender")(recommender_node))
+    graph.add_node("approval", timed_node("approval")(approval_node))
+    graph.add_node("action", timed_node("action")(action_node))
+    graph.add_node("history", timed_node("history")(history_node))
 
     graph.add_edge(START, "planner")
     graph.add_edge("planner", "hypothesis")

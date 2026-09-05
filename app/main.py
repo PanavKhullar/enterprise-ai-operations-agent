@@ -52,6 +52,7 @@ class InvestigationResponse(BaseModel):
     approved: Optional[bool] = None
     action_name: Optional[str] = None
     action_result: Optional[dict[str, Any]] = None
+    node_timings: Optional[list[dict[str, Any]]] = None
 
 
 class ErrorResponse(BaseModel):
@@ -92,6 +93,7 @@ def _initial_state(thread_id: str, question: str) -> dict:
         "action_name": "",
         "action_params": {},
         "action_result": {},
+        "node_timings": [],
     }
 
 
@@ -113,6 +115,7 @@ def _format_response(thread_id: str, result: dict) -> InvestigationResponse:
         approved=result.get("approved"),
         action_name=result.get("action_name"),
         action_result=result.get("action_result"),
+        node_timings=result.get("node_timings"),
     )
 
 

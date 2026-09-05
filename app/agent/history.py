@@ -30,6 +30,7 @@ def history_node(state):
             approved=state.get("approved", False),
             action_name=state.get("action_name", ""),
             action_result=state.get("action_result", {}),
+            node_timings=state.get("node_timings", []),
         )
 
         session.add(record)

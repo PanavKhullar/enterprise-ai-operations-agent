@@ -169,6 +169,12 @@ class Investigation(Base):
 
     action_result: Mapped[dict] = mapped_column(JSON, nullable=True)
 
+    # Per-node latency breakdown for this run, e.g.
+    # [{"node": "planner", "duration_ms": 812.4}, ...] — populated by the
+    # `timed_node` decorator (app/agent/timing.py). Lets us answer "where
+    # did the time go" for any past investigation without re-running it.
+    node_timings: Mapped[dict] = mapped_column(JSON, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         server_default=func.now(),
