@@ -1,7 +1,7 @@
-import httpx
 from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+
+from app.agent.llm_retry import llm_retry
 
 load_dotenv()
 
@@ -10,12 +10,7 @@ llm = ChatGoogleGenerativeAI(
 )
 
 
-@retry(
-    retry=retry_if_exception_type((httpx.RemoteProtocolError, httpx.ReadTimeout, httpx.ConnectError)),
-    stop=stop_after_attempt(4),
-    wait=wait_exponential(multiplier=1, min=2, max=20),
-    reraise=True,
-)
+@llm_retry
 def _invoke_llm(prompt: str):
     return llm.invoke(prompt)
 
