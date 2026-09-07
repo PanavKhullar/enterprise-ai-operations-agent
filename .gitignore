@@ -6,3 +6,7 @@ __pycache__/
 .vscode/
 ALTERNATE_IDEA_TRIAGE_AGENT.md
 FRIEND_CONTENT_AUTOMATION_AI_ARCHITECTURE.md
+PRODUCTION_IMPROVEMENTS.md
+*.log
+celery_worker.log
+git_status.txt

@@ -1,3 +1,5 @@
+import os
+
 from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
 
@@ -6,7 +8,7 @@ from app.agent.llm_retry import llm_retry
 load_dotenv()
 
 llm = ChatGoogleGenerativeAI(
-    model="gemini-3.5-flash",
+    model=os.getenv("GEMINI_MODEL", "gemini-3.5-flash"),
 )
 
 

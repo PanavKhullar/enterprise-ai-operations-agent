@@ -36,10 +36,11 @@ def validate_sql(sql: str) -> str:
 
     sql = sql.strip()
 
-    # Must start with SELECT or WITH.
-    # WITH is allowed because PostgreSQL queries can use CTEs:
-    # WITH x AS (...) SELECT ...
-    if not re.match(r"^(SELECT|WITH)\b", sql, re.IGNORECASE):
+    # Must start with SELECT or WITH (optionally wrapped in leading
+    # parentheses, e.g. `(SELECT ...) UNION ALL (SELECT ...)`, which the
+    # LLM commonly generates for multi-part UNION queries and is still a
+    # single, safe read-only statement).
+    if not re.match(r"^[(\s]*(SELECT|WITH)\b", sql, re.IGNORECASE):
         raise ValueError("Only SELECT queries are allowed.")
 
     # Remove a trailing semicolon for easier validation.

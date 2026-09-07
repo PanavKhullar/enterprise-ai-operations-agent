@@ -1,3 +1,5 @@
+import os
+
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 
@@ -9,7 +11,7 @@ load_dotenv()
 
 
 llm = ChatGoogleGenerativeAI(
-    model="gemini-3.5-flash",
+    model=os.getenv("GEMINI_MODEL", "gemini-3.5-flash"),
 )
 
 

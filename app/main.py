@@ -2,16 +2,27 @@ import logging
 import uuid
 from typing import Any, Literal, Optional
 
+from celery.result import AsyncResult
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
-from langgraph.types import Command
 from pydantic import BaseModel
 
-from app.agent.graph import agent
+from app.celery_app import celery_app
+from app.tasks import resume_investigation_task, run_investigation_task
 
 logger = logging.getLogger("ops_agent.api")
 
 app = FastAPI(title="Enterprise AI Operations Agent")
+
+# Maps thread_id -> latest Celery task_id for that investigation, so the
+# status-poll endpoint knows which task to check.
+#
+# NOTE: in-memory only. This is a deliberate, documented limitation for
+# now — it doesn't survive an API process restart, and won't work across
+# multiple API instances behind a load balancer. A production multi-instance
+# deployment would move this to Redis/Postgres alongside the LangGraph
+# checkpoint (which already persists the actual investigation state).
+_task_registry: dict[str, str] = {}
 
 
 class InvestigateRequest(BaseModel):
@@ -37,13 +48,15 @@ class ApprovalRequest(BaseModel):
 class InvestigationResponse(BaseModel):
     """Unified response shape for both endpoints.
 
-    When `status == "pending_approval"`, only `thread_id`, `status`, and
-    `approval_request` are populated. When `status == "completed"`, the
-    result fields are populated and `approval_request` is None.
+    When `status == "processing"`, only `thread_id` and `status` are
+    populated — the graph is still running in a Celery worker. When
+    `status == "pending_approval"`, `approval_request` is also populated.
+    When `status == "completed"`, the result fields are populated and
+    `approval_request` is None.
     """
 
     thread_id: str
-    status: Literal["pending_approval", "completed"]
+    status: Literal["processing", "pending_approval", "completed", "failed"]
     approval_request: Optional[ApprovalRequest] = None
     analysis: Optional[str] = None
     confidence: Optional[float] = None
@@ -97,12 +110,15 @@ def _initial_state(thread_id: str, question: str) -> dict:
     }
 
 
-def _format_response(thread_id: str, result: dict) -> InvestigationResponse:
-    if "__interrupt__" in result:
+def _format_task_result(thread_id: str, result: dict) -> InvestigationResponse:
+    """Build a response from a completed task's serialized result dict
+    (see `app.tasks._serialize_result`)."""
+
+    if "interrupt" in result:
         return InvestigationResponse(
             thread_id=thread_id,
             status="pending_approval",
-            approval_request=ApprovalRequest(**result["__interrupt__"][0].value),
+            approval_request=ApprovalRequest(**result["interrupt"]),
         )
 
     return InvestigationResponse(
@@ -119,6 +135,32 @@ def _format_response(thread_id: str, result: dict) -> InvestigationResponse:
     )
 
 
+def _poll_task(thread_id: str) -> InvestigationResponse:
+    """Look up the latest Celery task for a thread_id and report its status."""
+
+    task_id = _task_registry.get(thread_id)
+    if task_id is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No investigation found for thread_id '{thread_id}'.",
+        )
+
+    task_result = AsyncResult(task_id, app=celery_app)
+
+    if not task_result.ready():
+        return InvestigationResponse(thread_id=thread_id, status="processing")
+
+    if task_result.failed():
+        logger.error(
+            "Investigation task failed for thread_id=%s: %s",
+            thread_id,
+            task_result.result,
+        )
+        return InvestigationResponse(thread_id=thread_id, status="failed")
+
+    return _format_task_result(thread_id, task_result.result)
+
+
 @app.post(
     "/investigate",
     response_model=InvestigationResponse,
@@ -126,37 +168,55 @@ def _format_response(thread_id: str, result: dict) -> InvestigationResponse:
 )
 def investigate(request: InvestigateRequest):
     """
-    Kick off a new investigation. Runs the full pipeline (planner through
-    recommender) and then pauses, awaiting human approval before any
-    operational action is taken.
+    Kick off a new investigation. Enqueues the full pipeline (planner
+    through approval) onto a Celery worker and returns immediately with a
+    `thread_id` — the caller polls `GET /investigate/{thread_id}` for the
+    result instead of holding the HTTP connection open for the ~25-90s the
+    graph run takes.
     """
 
     thread_id = str(uuid.uuid4())
-    config = {"configurable": {"thread_id": thread_id}}
 
-    result = agent.invoke(_initial_state(thread_id, request.question), config=config)
+    task = run_investigation_task.delay(
+        thread_id, _initial_state(thread_id, request.question)
+    )
+    _task_registry[thread_id] = task.id
 
-    return _format_response(thread_id, result)
+    return InvestigationResponse(thread_id=thread_id, status="processing")
+
+
+@app.get(
+    "/investigate/{thread_id}",
+    response_model=InvestigationResponse,
+    responses={404: {"model": ErrorResponse}},
+)
+def get_investigation(thread_id: str):
+    """Poll the status/result of a previously started investigation."""
+
+    return _poll_task(thread_id)
 
 
 @app.post(
     "/investigate/{thread_id}/decision",
     response_model=InvestigationResponse,
-    responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+    responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
 )
 def decide(thread_id: str, request: DecisionRequest):
     """
     Resume a paused investigation with a human operator's decision on
-    whether (and how) to act on the recommendation.
+    whether (and how) to act on the recommendation. Enqueues the resume
+    onto a Celery worker and returns immediately; poll
+    `GET /investigate/{thread_id}` for the final result.
     """
 
-    config = {"configurable": {"thread_id": thread_id}}
-
-    state = agent.get_state(config)
-    if not state.next:
+    current = _poll_task(thread_id)
+    if current.status != "pending_approval":
         raise HTTPException(
-            status_code=404,
-            detail=f"No pending approval found for thread_id '{thread_id}'.",
+            status_code=409,
+            detail=(
+                f"Thread_id '{thread_id}' is not awaiting approval "
+                f"(current status: '{current.status}')."
+            ),
         )
 
     decision = {
@@ -165,6 +225,7 @@ def decide(thread_id: str, request: DecisionRequest):
         "params": request.params,
     }
 
-    result = agent.invoke(Command(resume=decision), config=config)
+    task = resume_investigation_task.delay(thread_id, decision)
+    _task_registry[thread_id] = task.id
 
-    return _format_response(thread_id, result)
+    return InvestigationResponse(thread_id=thread_id, status="processing")

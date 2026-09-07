@@ -5,6 +5,7 @@ from sqlalchemy import text
 
 from app.db.database import readonly_engine
 from app.agent.sql_validator import validate_sql
+from app.cache import get_cached_query_result, set_cached_query_result
 
 # Hard cap on rows returned to the agent, to bound token cost/latency
 # and avoid dumping huge result sets into the LLM context.
@@ -40,6 +41,10 @@ def execute_sql(query: str) -> dict[str, Any]:
     if not _LIMIT_RE.search(query):
         query = f"{query} LIMIT {MAX_ROWS}"
 
+    cached = get_cached_query_result(query)
+    if cached is not None:
+        return cached
+
     try:
         with readonly_engine.connect() as connection:
             connection.execute(
@@ -52,12 +57,14 @@ def execute_sql(query: str) -> dict[str, Any]:
             columns = list(result.keys())
             rows = [dict(row._mapping) for row in result]
 
-            return {
+            response = {
                 "success": True,
                 "columns": columns,
                 "rows": rows,
                 "row_count": len(rows),
             }
+            set_cached_query_result(query, response)
+            return response
 
     except Exception as e:
         return {
