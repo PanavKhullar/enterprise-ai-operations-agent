@@ -23,7 +23,11 @@ import time
 
 from langgraph.errors import GraphInterrupt
 
+import app.telemetry as telemetry
+from app.telemetry import correlation_context, get_tracer
+
 logger = logging.getLogger("ops_agent.timing")
+tracer = get_tracer(__name__)
 
 
 def timed_node(node_name: str):
@@ -33,36 +37,56 @@ def timed_node(node_name: str):
             thread_id = state.get("thread_id", "") if isinstance(state, dict) else ""
             start = time.perf_counter()
 
-            try:
-                result = node_fn(state)
-            except GraphInterrupt:
-                # Normal control flow (human-in-the-loop pause), not a
-                # failure — don't log/count it as an error.
-                duration_ms = round((time.perf_counter() - start) * 1000, 2)
-                logger.info(
-                    "node=%s thread_id=%s status=interrupted duration_ms=%s",
-                    node_name,
-                    thread_id,
-                    duration_ms,
-                )
-                raise
-            except Exception:
-                duration_ms = round((time.perf_counter() - start) * 1000, 2)
-                logger.info(
-                    "node=%s thread_id=%s status=error duration_ms=%s",
-                    node_name,
-                    thread_id,
-                    duration_ms,
-                )
-                raise
+            with correlation_context(thread_id=thread_id, node=node_name):
+                with tracer.start_as_current_span(f"node.{node_name}") as span:
+                    span.set_attribute("thread_id", thread_id)
+                    try:
+                        result = node_fn(state)
+                    except GraphInterrupt:
+                        # Normal control flow (human-in-the-loop pause), not a
+                        # failure — don't log/count it as an error.
+                        duration_ms = round((time.perf_counter() - start) * 1000, 2)
+                        span.set_attribute("status", "interrupted")
+                        logger.info(
+                            "node=%s thread_id=%s status=interrupted duration_ms=%s",
+                            node_name,
+                            thread_id,
+                            duration_ms,
+                        )
+                        if telemetry.node_duration:
+                            telemetry.node_duration.record(
+                                duration_ms, {"node": node_name, "status": "interrupted"}
+                            )
+                        raise
+                    except Exception as exc:
+                        duration_ms = round((time.perf_counter() - start) * 1000, 2)
+                        span.set_attribute("status", "error")
+                        span.record_exception(exc)
+                        logger.info(
+                            "node=%s thread_id=%s status=error duration_ms=%s",
+                            node_name,
+                            thread_id,
+                            duration_ms,
+                        )
+                        if telemetry.node_duration:
+                            telemetry.node_duration.record(
+                                duration_ms, {"node": node_name, "status": "error"}
+                            )
+                        raise
 
-            duration_ms = round((time.perf_counter() - start) * 1000, 2)
-            logger.info(
-                "node=%s thread_id=%s status=ok duration_ms=%s",
-                node_name,
-                thread_id,
-                duration_ms,
-            )
+                    duration_ms = round((time.perf_counter() - start) * 1000, 2)
+                    span.set_attribute("status", "ok")
+                    span.set_attribute("duration_ms", duration_ms)
+                    logger.info(
+                        "node=%s thread_id=%s status=ok duration_ms=%s",
+                        node_name,
+                        thread_id,
+                        duration_ms,
+                    )
+                    if telemetry.node_duration:
+                        telemetry.node_duration.record(
+                            duration_ms, {"node": node_name, "status": "ok"}
+                        )
 
             result = dict(result or {})
             result.setdefault("node_timings", [])

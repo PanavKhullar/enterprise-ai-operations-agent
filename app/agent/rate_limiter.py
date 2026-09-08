@@ -38,6 +38,8 @@ from contextlib import contextmanager
 
 import redis
 
+import app.telemetry as telemetry
+
 logger = logging.getLogger("ops_agent.rate_limiter")
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
@@ -122,7 +124,8 @@ def acquire_llm_slot():
         return
 
     holder_id = str(uuid.uuid4())
-    deadline = time.time() + ACQUIRE_TIMEOUT_SECONDS
+    wait_start = time.time()
+    deadline = wait_start + ACQUIRE_TIMEOUT_SECONDS
     acquired = False
 
     try:
@@ -136,7 +139,11 @@ def acquire_llm_slot():
                 break
             time.sleep(0.1 + random.uniform(0, 0.2))
 
+        wait_ms = (time.time() - wait_start) * 1000
+        telemetry.rate_limiter_wait_duration.record(wait_ms, {"acquired": str(acquired)})
+
         if not acquired and time.time() >= deadline:
+            telemetry.rate_limiter_timeout_counter.add(1)
             logger.warning(
                 "Timed out after %.0fs waiting for a free Gemini call slot; proceeding anyway",
                 ACQUIRE_TIMEOUT_SECONDS,

@@ -12,6 +12,13 @@ endpoint instead of holding the connection open.
 import os
 
 from celery import Celery
+from celery.signals import setup_logging as celery_setup_logging_signal
+from celery.signals import worker_init, worker_process_init
+from opentelemetry.instrumentation.celery import CeleryInstrumentor
+from opentelemetry.instrumentation.redis import RedisInstrumentor
+from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+
+from app.telemetry import setup_logging, setup_metrics, setup_tracing
 
 # Redis used as both the message broker (task queue) and the result
 # backend (task status/return value storage). Overridable via env var so
@@ -37,3 +44,39 @@ celery_app.conf.update(
     # a worker restart mid-run; track failures explicitly instead.
     task_acks_late=False,
 )
+
+
+def _init_worker_telemetry(**kwargs):
+    """Sets up structured logging + tracing + metrics before any task runs.
+
+    Connected to both `worker_init` and `worker_process_init` because:
+    - `worker_init` fires once in the main worker process for *every* pool
+      type, including `--pool=solo` (which never spawns a separate child
+      process, so `worker_process_init` alone would never fire there).
+    - `worker_process_init` additionally fires in each forked child under
+      the default `prefork` pool, where tasks actually execute.
+    All setup_* functions are idempotent, so connecting both signals is
+    safe and just guarantees at least one of them runs in the process
+    that executes tasks.
+    """
+
+    setup_logging()
+    setup_tracing("ops-agent-worker")
+    setup_metrics("ops-agent-worker")
+    CeleryInstrumentor().instrument()
+    RedisInstrumentor().instrument()
+    SQLAlchemyInstrumentor().instrument()
+
+
+worker_init.connect(_init_worker_telemetry)
+worker_process_init.connect(_init_worker_telemetry)
+
+
+@celery_setup_logging_signal.connect
+def _skip_celery_default_logging(**kwargs):
+    """Merely having a receiver connected to this signal tells Celery to
+    skip its own default logging configuration (which would otherwise
+    reset the root logger's handlers to plain-text after our JSON
+    formatter is installed by `_init_worker_telemetry`). The actual JSON
+    logging setup happens in `_init_worker_telemetry` above."""
+    setup_logging()

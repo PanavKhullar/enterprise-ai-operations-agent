@@ -1,18 +1,61 @@
 import logging
+import time
 import uuid
 from typing import Any, Literal, Optional
 
 from celery.result import AsyncResult
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.instrumentation.redis import RedisInstrumentor
+from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 from pydantic import BaseModel
 
+import app.telemetry as telemetry
 from app.celery_app import celery_app
 from app.tasks import resume_investigation_task, run_investigation_task
+from app.telemetry import (
+    correlation_context,
+    get_tracer,
+    setup_logging,
+    setup_metrics,
+    setup_tracing,
+)
+
+setup_logging()
+setup_tracing("ops-agent-api")
+setup_metrics("ops-agent-api")
 
 logger = logging.getLogger("ops_agent.api")
+tracer = get_tracer(__name__)
 
 app = FastAPI(title="Enterprise AI Operations Agent")
+FastAPIInstrumentor.instrument_app(app)
+RedisInstrumentor().instrument()
+SQLAlchemyInstrumentor().instrument()
+
+
+@app.middleware("http")
+async def correlation_and_metrics_middleware(request: Request, call_next):
+    """Assigns/propagates a request_id for structured logs and traces, and
+    records API-level request count/latency/error metrics for every route."""
+
+    request_id = request.headers.get("x-request-id", str(uuid.uuid4()))
+    start = time.perf_counter()
+
+    with correlation_context(request_id=request_id):
+        response = await call_next(request)
+
+    duration_ms = (time.perf_counter() - start) * 1000
+    attributes = {
+        "path": request.url.path,
+        "method": request.method,
+        "status_code": response.status_code,
+    }
+    telemetry.api_request_counter.add(1, attributes)
+    telemetry.api_request_duration.record(duration_ms, attributes)
+    response.headers["x-request-id"] = request_id
+    return response
 
 # Maps thread_id -> latest Celery task_id for that investigation, so the
 # status-poll endpoint knows which task to check.
@@ -177,10 +220,15 @@ def investigate(request: InvestigateRequest):
 
     thread_id = str(uuid.uuid4())
 
-    task = run_investigation_task.delay(
-        thread_id, _initial_state(thread_id, request.question)
-    )
-    _task_registry[thread_id] = task.id
+    with correlation_context(thread_id=thread_id):
+        with tracer.start_as_current_span("investigate.submit") as span:
+            span.set_attribute("thread_id", thread_id)
+            task = run_investigation_task.delay(
+                thread_id, _initial_state(thread_id, request.question)
+            )
+            span.set_attribute("celery.task_id", task.id)
+        _task_registry[thread_id] = task.id
+        logger.info("event=investigation_submitted task_id=%s", task.id)
 
     return InvestigationResponse(thread_id=thread_id, status="processing")
 
@@ -193,7 +241,8 @@ def investigate(request: InvestigateRequest):
 def get_investigation(thread_id: str):
     """Poll the status/result of a previously started investigation."""
 
-    return _poll_task(thread_id)
+    with correlation_context(thread_id=thread_id):
+        return _poll_task(thread_id)
 
 
 @app.post(
@@ -209,23 +258,25 @@ def decide(thread_id: str, request: DecisionRequest):
     `GET /investigate/{thread_id}` for the final result.
     """
 
-    current = _poll_task(thread_id)
-    if current.status != "pending_approval":
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"Thread_id '{thread_id}' is not awaiting approval "
-                f"(current status: '{current.status}')."
-            ),
-        )
+    with correlation_context(thread_id=thread_id):
+        current = _poll_task(thread_id)
+        if current.status != "pending_approval":
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Thread_id '{thread_id}' is not awaiting approval "
+                    f"(current status: '{current.status}')."
+                ),
+            )
 
-    decision = {
-        "approved": request.approved,
-        "action": request.action,
-        "params": request.params,
-    }
+        decision = {
+            "approved": request.approved,
+            "action": request.action,
+            "params": request.params,
+        }
 
-    task = resume_investigation_task.delay(thread_id, decision)
-    _task_registry[thread_id] = task.id
+        task = resume_investigation_task.delay(thread_id, decision)
+        _task_registry[thread_id] = task.id
+        logger.info("event=investigation_resumed task_id=%s", task.id)
 
     return InvestigationResponse(thread_id=thread_id, status="processing")

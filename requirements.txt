@@ -16,3 +16,10 @@ pandas
 
 celery
 redis
+
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-instrumentation-fastapi
+opentelemetry-instrumentation-celery
+opentelemetry-instrumentation-redis
+opentelemetry-instrumentation-sqlalchemy

@@ -1,4 +1,5 @@
 import re
+import time
 from typing import Any
 
 from sqlalchemy import text
@@ -6,6 +7,10 @@ from sqlalchemy import text
 from app.db.database import readonly_engine
 from app.agent.sql_validator import validate_sql
 from app.cache import get_cached_query_result, set_cached_query_result
+import app.telemetry as telemetry
+from app.telemetry import get_tracer
+
+tracer = get_tracer(__name__)
 
 # Hard cap on rows returned to the agent, to bound token cost/latency
 # and avoid dumping huge result sets into the LLM context.
@@ -45,29 +50,40 @@ def execute_sql(query: str) -> dict[str, Any]:
     if cached is not None:
         return cached
 
-    try:
-        with readonly_engine.connect() as connection:
-            connection.execute(
-                text("SET statement_timeout = :timeout_ms"),
-                {"timeout_ms": STATEMENT_TIMEOUT_MS},
-            )
+    start = time.perf_counter()
+    with tracer.start_as_current_span("db.execute_sql") as span:
+        try:
+            with readonly_engine.connect() as connection:
+                connection.execute(
+                    text("SET statement_timeout = :timeout_ms"),
+                    {"timeout_ms": STATEMENT_TIMEOUT_MS},
+                )
 
-            result = connection.execute(text(query))
+                result = connection.execute(text(query))
 
-            columns = list(result.keys())
-            rows = [dict(row._mapping) for row in result]
+                columns = list(result.keys())
+                rows = [dict(row._mapping) for row in result]
 
-            response = {
-                "success": True,
-                "columns": columns,
-                "rows": rows,
-                "row_count": len(rows),
+                response = {
+                    "success": True,
+                    "columns": columns,
+                    "rows": rows,
+                    "row_count": len(rows),
+                }
+                set_cached_query_result(query, response)
+
+                duration_ms = (time.perf_counter() - start) * 1000
+                span.set_attribute("row_count", len(rows))
+                telemetry.db_query_duration.record(duration_ms, {"status": "ok"})
+                return response
+
+        except Exception as e:
+            duration_ms = (time.perf_counter() - start) * 1000
+            span.set_attribute("status", "error")
+            span.record_exception(e)
+            telemetry.db_query_duration.record(duration_ms, {"status": "error"})
+            telemetry.db_error_counter.add(1, {"error": type(e).__name__})
+            return {
+                "success": False,
+                "error": str(e),
             }
-            set_cached_query_result(query, response)
-            return response
-
-    except Exception as e:
-        return {
-            "success": False,
-            "error": str(e),
-        }

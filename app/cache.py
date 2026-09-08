@@ -21,6 +21,8 @@ from typing import Any, Optional
 
 import redis
 
+import app.telemetry as telemetry
+
 logger = logging.getLogger("ops_agent.cache")
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
@@ -73,9 +75,11 @@ def get_cached_query_result(query: str) -> Optional[dict[str, Any]]:
 
     if cached is None:
         logger.info("cache=miss query_hash=%s", _query_key(query))
+        telemetry.cache_counter.add(1, {"result": "miss"})
         return None
 
     logger.info("cache=hit query_hash=%s", _query_key(query))
+    telemetry.cache_counter.add(1, {"result": "hit"})
     try:
         return json.loads(cached)
     except (TypeError, ValueError):
