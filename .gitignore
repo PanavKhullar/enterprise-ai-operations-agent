@@ -10,3 +10,10 @@ PRODUCTION_IMPROVEMENTS.md
 *.log
 celery_worker.log
 git_status.txt
+exports/
+# Benchmark / evaluation files
+benchmark.py
+runner.py
+*.json
+benchmark_results.csv
+excel_export.py

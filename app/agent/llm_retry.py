@@ -25,6 +25,7 @@ from google.genai.errors import APIError, ClientError
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 import app.telemetry as telemetry
+from app.agent.llm_provider import is_quota_error, rotate_key
 from app.agent.rate_limiter import acquire_llm_slot
 from app.telemetry import get_tracer
 
@@ -58,12 +59,20 @@ def _log_retry(retry_state):
     telemetry.gemini_retry_counter.add(
         1, {"caller": caller, "exception": type(exc).__name__ if exc else ""}
     )
+    telemetry.emit_benchmark_event("gemini_retry", caller=caller)
     logger.warning(
         "event=gemini_retry caller=%s attempt=%s exception=%s",
         caller,
         retry_state.attempt_number,
         exc,
     )
+
+    # On a 429 (quota/rate limit), immediately switch to the next
+    # configured Gemini API key (if more than one is set) so the retry
+    # that follows this backoff has a fresh quota to try, instead of
+    # hitting the same exhausted key again.
+    if exc is not None and is_quota_error(exc):
+        rotate_key()
 
 
 _with_retry = retry(
@@ -110,6 +119,10 @@ def llm_retry(func):
                     telemetry.gemini_call_duration.record(
                         duration_ms, {"caller": caller, "status": "error"}
                     )
+                    telemetry.emit_benchmark_event(
+                        "gemini_call", caller=caller, status="error", duration_ms=duration_ms,
+                        error_type=type(exc).__name__,
+                    )
                     raise
 
                 duration_ms = (time.perf_counter() - start) * 1000
@@ -129,6 +142,11 @@ def llm_retry(func):
 
                 telemetry.gemini_call_counter.add(1, {"caller": caller, "status": "ok"})
                 telemetry.gemini_call_duration.record(duration_ms, {"caller": caller, "status": "ok"})
+                telemetry.emit_benchmark_event(
+                    "gemini_call", caller=caller, status="ok", duration_ms=duration_ms,
+                    input_tokens=(usage or {}).get("input_tokens", 0),
+                    output_tokens=(usage or {}).get("output_tokens", 0),
+                )
                 logger.info(
                     "event=gemini_call caller=%s status=ok duration_ms=%.2f",
                     caller,

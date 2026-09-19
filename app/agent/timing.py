@@ -57,6 +57,9 @@ def timed_node(node_name: str):
                             telemetry.node_duration.record(
                                 duration_ms, {"node": node_name, "status": "interrupted"}
                             )
+                        telemetry.emit_benchmark_event(
+                            "node", node=node_name, status="interrupted", duration_ms=duration_ms
+                        )
                         raise
                     except Exception as exc:
                         duration_ms = round((time.perf_counter() - start) * 1000, 2)
@@ -72,6 +75,10 @@ def timed_node(node_name: str):
                             telemetry.node_duration.record(
                                 duration_ms, {"node": node_name, "status": "error"}
                             )
+                        telemetry.emit_benchmark_event(
+                            "node", node=node_name, status="error", duration_ms=duration_ms,
+                            error_type=type(exc).__name__,
+                        )
                         raise
 
                     duration_ms = round((time.perf_counter() - start) * 1000, 2)
@@ -87,6 +94,9 @@ def timed_node(node_name: str):
                         telemetry.node_duration.record(
                             duration_ms, {"node": node_name, "status": "ok"}
                         )
+                    telemetry.emit_benchmark_event(
+                        "node", node=node_name, status="ok", duration_ms=duration_ms
+                    )
 
             result = dict(result or {})
             result.setdefault("node_timings", [])

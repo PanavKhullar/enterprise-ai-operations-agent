@@ -61,6 +61,9 @@ def _init_worker_telemetry(**kwargs):
     """
 
     setup_logging()
+    # Set OTEL_CONSOLE_EXPORT=false in the environment to keep tracing/
+    # metrics initialized (so instrumentation calls below still work)
+    # without the Console exporters flooding the terminal.
     setup_tracing("ops-agent-worker")
     setup_metrics("ops-agent-worker")
     CeleryInstrumentor().instrument()

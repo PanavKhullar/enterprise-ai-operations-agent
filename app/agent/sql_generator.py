@@ -1,16 +1,7 @@
-import os
 from datetime import datetime, timedelta, timezone
 
-from dotenv import load_dotenv
-from langchain_google_genai import ChatGoogleGenerativeAI
-
+from app.agent.llm_provider import get_llm
 from app.agent.llm_retry import llm_retry
-
-load_dotenv()
-
-llm = ChatGoogleGenerativeAI(
-    model=os.getenv("GEMINI_MODEL", "gemini-3.5-flash"),
-)
 
 # Fixed "recent" vs "historical/baseline" windows used whenever a step asks
 # for a recent-vs-historical comparison (e.g. "compare recent performance
@@ -25,9 +16,17 @@ llm = ChatGoogleGenerativeAI(
 RECENT_WINDOW_DAYS = 30
 BASELINE_WINDOW_DAYS = 150
 
+# Fixed reference date for the synthetic evaluation dataset.
+# The current database contains data through 27 Aug 2026.
+# Using a fixed date keeps evaluation reproducible and aligns
+# the recent window with the injected anomalies.
+REFERENCE_END_DATE = datetime(
+    2026, 8, 27, 0, 0, 0, tzinfo=timezone.utc
+)
+
 
 def _compute_windows() -> dict[str, str]:
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = REFERENCE_END_DATE
     recent_start = now - timedelta(days=RECENT_WINDOW_DAYS)
     baseline_start = recent_start - timedelta(days=BASELINE_WINDOW_DAYS)
 
@@ -40,7 +39,7 @@ def _compute_windows() -> dict[str, str]:
 
 @llm_retry
 def _invoke_llm(prompt: str):
-    return llm.invoke(prompt)
+    return get_llm().invoke(prompt)
 
 
 def generate_sql(question: str, investigation_step: str) -> str:
@@ -102,10 +101,17 @@ sla_events:
 - event_id
 - order_id
 - warehouse_id
-- event_type
+- event_type   -- ONLY two possible values: 'SLA_BREACH' or 'SLA_MET'.
+                  There is exactly ONE sla_events row per order (not per
+                  delay/damage/exception incident) — it always exists,
+                  regardless of outcome. There is NO separate delay/damage/
+                  exception event type or table anywhere in this schema.
+                  Do NOT invent or filter on event_type values like
+                  'DELAY', 'DAMAGE', 'EXCEPTION' etc. — they don't exist
+                  and will silently return 0 rows.
 - expected_time
 - actual_time
-- delay_minutes
+- delay_minutes  -- 0 when the order was on time, > 0 when it breached.
 - created_at
 
 Generate ONE PostgreSQL SELECT query that answers the investigation step.
@@ -114,6 +120,12 @@ Rules:
 - Only generate SELECT queries.
 - Do not INSERT, UPDATE, DELETE, DROP, ALTER, or CREATE.
 - Use only the tables and columns provided above.
+- Because every order has exactly one sla_events row regardless of
+  outcome, counting/joining sla_events WITHOUT filtering
+  "event_type = 'SLA_BREACH'" will always equal the total shipment/order
+  count and is almost never what's meant by "breaches", "delays", or
+  "SLA violations". When the step is about breaches/delays specifically,
+  filter with `event_type = 'SLA_BREACH'` (and/or `delay_minutes > 0`).
 - PostgreSQL has no ROUND(double precision, integer) overload. If you call
   ROUND() on an AVG(), SUM(), or other expression that may be a double
   precision value, cast it to numeric first, e.g. ROUND(AVG(x)::numeric, 2).

@@ -1,20 +1,10 @@
-import os
-
-from dotenv import load_dotenv
-from langchain_google_genai import ChatGoogleGenerativeAI
-
+from app.agent.llm_provider import get_llm
 from app.agent.llm_retry import llm_retry
-
-load_dotenv()
-
-llm = ChatGoogleGenerativeAI(
-    model=os.getenv("GEMINI_MODEL", "gemini-3.5-flash"),
-)
 
 
 @llm_retry
 def _invoke_llm(prompt: str):
-    return llm.invoke(prompt)
+    return get_llm().invoke(prompt)
 
 
 def _extract_text(content) -> str:
@@ -37,7 +27,7 @@ def _extract_text(content) -> str:
 def recommender_node(state):
     """
     Produce an actionable recommendation based on the analyst's root-cause
-    analysis, confidence, and hypothesis evaluations.
+    analysis and confidence.
 
     This runs after the analyst node and is a prerequisite for any later
     human-approval / action-execution steps: the recommendation is what a
@@ -47,18 +37,9 @@ def recommender_node(state):
     question = state["question"]
     analysis = state.get("analysis", "")
     confidence = state.get("confidence", 0.0)
-    hypothesis_evaluations = state.get("hypothesis_evaluations", [])
 
     if not analysis:
         return {"recommendation": "No analysis was available, so no recommendation could be produced."}
-
-    evaluations_text = (
-        "\n".join(
-            f"- {e.get('hypothesis')}: {e.get('verdict')} ({e.get('explanation')})"
-            for e in hypothesis_evaluations
-        )
-        or "(none)"
-    )
 
     prompt = f"""
 You are a senior operations lead deciding what action to take following an
@@ -69,9 +50,6 @@ Original question:
 
 Root-cause analysis (confidence={confidence}):
 {analysis}
-
-Hypothesis evaluations:
-{evaluations_text}
 
 Based ONLY on the above, write a concise, actionable recommendation for what
 the operations team should do next. Requirements:

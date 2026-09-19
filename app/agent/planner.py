@@ -1,23 +1,13 @@
-import os
-
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 
+from app.agent.llm_provider import get_llm
 from app.agent.llm_retry import llm_retry
 from app.agent.state import AgentState
-from dotenv import load_dotenv
-
-load_dotenv()
-
-
-llm = ChatGoogleGenerativeAI(
-    model=os.getenv("GEMINI_MODEL", "gemini-3.5-flash"),
-)
 
 
 @llm_retry
 def _invoke_llm(prompt):
-    return llm.invoke(prompt)
+    return get_llm().invoke(prompt)
 
 
 planner_prompt = ChatPromptTemplate.from_messages([

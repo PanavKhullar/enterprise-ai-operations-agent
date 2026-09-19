@@ -13,6 +13,7 @@ pydantic-settings
 
 python-dotenv
 pandas
+openpyxl
 
 celery
 redis

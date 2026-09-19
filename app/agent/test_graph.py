@@ -1,7 +1,17 @@
+import os
 import uuid
 
-from langgraph.types import Command
+# Prevent OpenTelemetry console exporters from flooding test output.
+os.environ.setdefault("OTEL_CONSOLE_EXPORT", "false")
 
+from app.telemetry import setup_logging, setup_metrics, setup_tracing
+
+# Initialize observability for this standalone test process.
+setup_logging()
+setup_tracing("ops-agent-test")
+setup_metrics("ops-agent-test")
+
+from langgraph.types import Command
 from app.agent.graph import agent
 
 # A fresh thread_id per run is required: node_timings uses an operator.add
@@ -13,14 +23,12 @@ thread_id = f"test-graph-run-{uuid.uuid4()}"
 
 initial_state = {
     "thread_id": thread_id,
-    "question": "Why has SLA performance deteriorated recently?",
+    "question": "Compare average order processing time by warehouse for the last 30 days vs the prior period.",
     "investigation_plan": [],
-    "hypotheses": [],
     "current_step": 0,
     "evidence": [],
     "analysis": "",
     "confidence": 0.0,
-    "hypothesis_evaluations": [],
     "citations": [],
     "recommendation": "",
     "approved": False,
@@ -59,10 +67,6 @@ print("\nInvestigation Plan:\n")
 for step in result["investigation_plan"]:
     print(step)
 
-print("\n\n=== HYPOTHESES ===\n")
-for h in result.get("hypotheses", []):
-    print(h)
-
 print("\n\n=== EVIDENCE ===\n")
 for item in result.get("evidence", []):
     print(item)
@@ -73,10 +77,6 @@ print(result.get("analysis", "<no analysis produced>"))
 
 print("\n\n=== CONFIDENCE ===\n")
 print(result.get("confidence"))
-
-print("\n\n=== HYPOTHESIS EVALUATIONS ===\n")
-for h in result.get("hypothesis_evaluations", []):
-    print(h)
 
 print("\n\n=== CITATIONS ===\n")
 for c in result.get("citations", []):

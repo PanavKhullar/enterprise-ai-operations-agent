@@ -141,9 +141,11 @@ def acquire_llm_slot():
 
         wait_ms = (time.time() - wait_start) * 1000
         telemetry.rate_limiter_wait_duration.record(wait_ms, {"acquired": str(acquired)})
+        telemetry.emit_benchmark_event("rate_limiter_wait", duration_ms=wait_ms, acquired=acquired)
 
         if not acquired and time.time() >= deadline:
             telemetry.rate_limiter_timeout_counter.add(1)
+            telemetry.emit_benchmark_event("rate_limiter_timeout")
             logger.warning(
                 "Timed out after %.0fs waiting for a free Gemini call slot; proceeding anyway",
                 ACQUIRE_TIMEOUT_SECONDS,

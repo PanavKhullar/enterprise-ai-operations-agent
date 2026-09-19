@@ -19,6 +19,8 @@ import logging
 import os
 import time
 
+import redis
+
 from opentelemetry import metrics, trace
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import (
@@ -35,6 +37,7 @@ request_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("request_id
 thread_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("thread_id", default="")
 task_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("task_id", default="")
 node_var: contextvars.ContextVar[str] = contextvars.ContextVar("node", default="")
+benchmark_run_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("benchmark_run_id", default="")
 
 
 class _CorrelationScope:
@@ -48,6 +51,7 @@ class _CorrelationScope:
         "thread_id": thread_id_var,
         "task_id": task_id_var,
         "node": node_var,
+        "benchmark_run_id": benchmark_run_id_var,
     }
 
     def __init__(self, **kwargs):
@@ -68,6 +72,61 @@ class _CorrelationScope:
 def correlation_context(**kwargs) -> _CorrelationScope:
     """Usage: `with correlation_context(thread_id=..., task_id=...): ...`"""
     return _CorrelationScope(**kwargs)
+
+
+# --- Benchmark-only event sink -----------------------------------------
+
+# Existing OpenTelemetry metrics are console-exported, so they cannot be
+# queried per investigation.  Benchmark requests opt in via a correlation ID;
+# only then do we mirror the existing measurement outcomes to a short-lived
+# Redis list.  This neither adds timers nor affects ordinary investigations.
+BENCHMARK_EVENT_TTL_SECONDS = 3600
+_benchmark_redis_client: "redis.Redis | bool | None" = None
+
+
+def _benchmark_event_client():
+    global _benchmark_redis_client
+    if _benchmark_redis_client is None:
+        try:
+            _benchmark_redis_client = redis.Redis.from_url(
+                os.environ.get("REDIS_URL", "redis://localhost:6379/0"),
+                decode_responses=True,
+                socket_connect_timeout=1,
+            )
+            _benchmark_redis_client.ping()
+        except Exception:
+            _benchmark_redis_client = False
+    return _benchmark_redis_client or None
+
+
+def emit_benchmark_event(event: str, **fields) -> None:
+    """Persist one existing telemetry outcome for an opted-in benchmark run.
+
+    Failure to write the optional sink is deliberately invisible to the agent:
+    normal investigations retain their existing telemetry behavior.
+    """
+    run_id = benchmark_run_id_var.get()
+    if not run_id:
+        return
+    client = _benchmark_event_client()
+    if client is None:
+        return
+    payload = {
+        "event": event,
+        "timestamp": time.time(),
+        "thread_id": thread_id_var.get(),
+        "task_id": task_id_var.get(),
+        "node": node_var.get(),
+        **fields,
+    }
+    payload = {key: value for key, value in payload.items() if value not in ("", None)}
+    try:
+        key = f"benchmark:telemetry:{run_id}"
+        client.rpush(key, json.dumps(payload, default=str))
+        client.expire(key, BENCHMARK_EVENT_TTL_SECONDS)
+    except Exception:
+        # Observability must not change investigation behavior.
+        pass
 
 
 # --- Structured JSON logging --------------------------------------------
@@ -96,6 +155,13 @@ class _JsonFormatter(logging.Formatter):
 
 _logging_configured = False
 
+# Third-party loggers that are noisy at INFO level but rarely useful for
+# following an investigation's own flow (e.g. google-genai's SDK prints an
+# "AFC is enabled..." notice on every single call, httpx logs every HTTP
+# request line). Raised to WARNING so only our own app loggers
+# (ops_agent.*, celery.*) show up at INFO.
+_QUIET_LOGGERS = ["google_genai", "httpx", "httpcore"]
+
 
 def setup_logging(level: int = logging.INFO) -> None:
     """Idempotent: safe to call from both the API process and every Celery
@@ -111,6 +177,9 @@ def setup_logging(level: int = logging.INFO) -> None:
     root = logging.getLogger()
     root.handlers = [handler]
     root.setLevel(level)
+
+    for name in _QUIET_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
 
     _logging_configured = True
 
@@ -133,7 +202,12 @@ def setup_tracing(service_name: str) -> None:
         return
 
     provider = TracerProvider(resource=Resource.create({"service.name": service_name}))
-    provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
+    # OTEL_CONSOLE_EXPORT=false (set while learning the system) skips
+    # attaching the Console exporter so spans are still created (and any
+    # code that calls tracer.start_as_current_span(...) keeps working)
+    # but nothing gets printed to the terminal.
+    if os.environ.get("OTEL_CONSOLE_EXPORT", "true").lower() != "false":
+        provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
     trace.set_tracer_provider(provider)
 
     _tracing_configured = True
@@ -182,9 +256,15 @@ def setup_metrics(service_name: str) -> None:
 
     # 30s export interval keeps Console output readable during dev/manual
     # verification runs instead of flooding the log on every single call.
-    reader = PeriodicExportingMetricReader(ConsoleMetricExporter(), export_interval_millis=30000)
+    # OTEL_CONSOLE_EXPORT=false skips attaching a reader/exporter entirely
+    # so the counters/histograms below still work (calls to .add()/.record()
+    # succeed) but nothing gets periodically printed to the terminal.
+    metric_readers = []
+    if os.environ.get("OTEL_CONSOLE_EXPORT", "true").lower() != "false":
+        reader = PeriodicExportingMetricReader(ConsoleMetricExporter(), export_interval_millis=30000)
+        metric_readers = [reader]
     provider = MeterProvider(
-        resource=Resource.create({"service.name": service_name}), metric_readers=[reader]
+        resource=Resource.create({"service.name": service_name}), metric_readers=metric_readers
     )
     metrics.set_meter_provider(provider)
     _meter = metrics.get_meter("ops_agent")

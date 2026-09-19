@@ -23,6 +23,9 @@ from app.telemetry import (
 )
 
 setup_logging()
+# Set OTEL_CONSOLE_EXPORT=false in the environment to keep tracing/metrics
+# initialized (so instrumentation calls below still work) without the
+# Console exporters flooding the terminal with trace/metric JSON dumps.
 setup_tracing("ops-agent-api")
 setup_metrics("ops-agent-api")
 
@@ -132,17 +135,15 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     )
 
 
-def _initial_state(thread_id: str, question: str) -> dict:
+def _initial_state(thread_id: str, question: str, benchmark_run_id: str = "") -> dict:
     return {
         "thread_id": thread_id,
         "question": question,
         "investigation_plan": [],
-        "hypotheses": [],
         "current_step": 0,
         "evidence": [],
         "analysis": "",
         "confidence": 0.0,
-        "hypothesis_evaluations": [],
         "citations": [],
         "recommendation": "",
         "approved": False,
@@ -150,6 +151,7 @@ def _initial_state(thread_id: str, question: str) -> dict:
         "action_params": {},
         "action_result": {},
         "node_timings": [],
+        "benchmark_run_id": benchmark_run_id,
     }
 
 
@@ -209,7 +211,7 @@ def _poll_task(thread_id: str) -> InvestigationResponse:
     response_model=InvestigationResponse,
     responses={500: {"model": ErrorResponse}},
 )
-def investigate(request: InvestigateRequest):
+def investigate(request: InvestigateRequest, http_request: Request):
     """
     Kick off a new investigation. Enqueues the full pipeline (planner
     through approval) onto a Celery worker and returns immediately with a
@@ -219,12 +221,13 @@ def investigate(request: InvestigateRequest):
     """
 
     thread_id = str(uuid.uuid4())
+    benchmark_run_id = http_request.headers.get("x-benchmark-run-id", "")
 
-    with correlation_context(thread_id=thread_id):
+    with correlation_context(thread_id=thread_id, benchmark_run_id=benchmark_run_id):
         with tracer.start_as_current_span("investigate.submit") as span:
             span.set_attribute("thread_id", thread_id)
             task = run_investigation_task.delay(
-                thread_id, _initial_state(thread_id, request.question)
+                thread_id, _initial_state(thread_id, request.question, benchmark_run_id)
             )
             span.set_attribute("celery.task_id", task.id)
         _task_registry[thread_id] = task.id
@@ -250,7 +253,7 @@ def get_investigation(thread_id: str):
     response_model=InvestigationResponse,
     responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
 )
-def decide(thread_id: str, request: DecisionRequest):
+def decide(thread_id: str, request: DecisionRequest, http_request: Request):
     """
     Resume a paused investigation with a human operator's decision on
     whether (and how) to act on the recommendation. Enqueues the resume
@@ -275,7 +278,10 @@ def decide(thread_id: str, request: DecisionRequest):
             "params": request.params,
         }
 
-        task = resume_investigation_task.delay(thread_id, decision)
+        # This header is set only by the benchmark runner.  It preserves
+        # benchmark telemetry correlation across the separate resume task.
+        benchmark_run_id = http_request.headers.get("x-benchmark-run-id", "")
+        task = resume_investigation_task.delay(thread_id, decision, benchmark_run_id)
         _task_registry[thread_id] = task.id
         logger.info("event=investigation_resumed task_id=%s", task.id)
 

@@ -35,6 +35,7 @@ def execute_sql(query: str) -> dict[str, Any]:
        has SELECT privileges, so even a bypassed check can't write.
     """
 
+    telemetry.emit_benchmark_event("sql_attempt")
     try:
         query = validate_sql(query)
     except ValueError as e:
@@ -75,6 +76,7 @@ def execute_sql(query: str) -> dict[str, Any]:
                 duration_ms = (time.perf_counter() - start) * 1000
                 span.set_attribute("row_count", len(rows))
                 telemetry.db_query_duration.record(duration_ms, {"status": "ok"})
+                telemetry.emit_benchmark_event("sql_execution", status="ok", duration_ms=duration_ms)
                 return response
 
         except Exception as e:
@@ -83,6 +85,9 @@ def execute_sql(query: str) -> dict[str, Any]:
             span.record_exception(e)
             telemetry.db_query_duration.record(duration_ms, {"status": "error"})
             telemetry.db_error_counter.add(1, {"error": type(e).__name__})
+            telemetry.emit_benchmark_event(
+                "sql_execution", status="error", duration_ms=duration_ms, error_type=type(e).__name__
+            )
             return {
                 "success": False,
                 "error": str(e),

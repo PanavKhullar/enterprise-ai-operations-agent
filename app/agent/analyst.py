@@ -1,21 +1,12 @@
 import json
-import os
 
-from dotenv import load_dotenv
-from langchain_google_genai import ChatGoogleGenerativeAI
-
+from app.agent.llm_provider import get_llm
 from app.agent.llm_retry import llm_retry
-
-load_dotenv()
-
-llm = ChatGoogleGenerativeAI(
-    model=os.getenv("GEMINI_MODEL", "gemini-3.5-flash"),
-)
 
 
 @llm_retry
 def _invoke_llm(prompt: str):
-    return llm.invoke(prompt)
+    return get_llm().invoke(prompt)
 
 
 def _extract_text(content) -> str:
@@ -94,28 +85,21 @@ def analyst_node(state):
 
     question = state["question"]
     evidence = state.get("evidence", [])
-    hypotheses = state.get("hypotheses", [])
 
     if not evidence:
         return {
             "analysis": "No evidence was collected, so no analysis could be produced.",
             "confidence": 0.0,
-            "hypothesis_evaluations": [],
             "citations": [],
         }
 
     evidence_text = _format_evidence(evidence)
-    hypotheses_text = "\n".join(hypotheses) if hypotheses else "(none generated)"
 
     prompt = f"""
 You are a senior operations analyst reviewing an automated investigation.
 
 Original question:
 {question}
-
-Candidate hypotheses formed before evidence was collected (unverified guesses,
-to be confirmed, refined, or discarded based on the evidence below):
-{hypotheses_text}
 
 Below is the evidence gathered during the investigation, in order. Each item
 is tagged with an [evidence_id=N] and contains the investigation step, the
@@ -137,14 +121,6 @@ matching exactly this schema:
   "confidence": <float 0.0-1.0: overall confidence in the root-cause "
                 "analysis, based on how directly and completely the "
                 "evidence supports the conclusion>,
-  "hypothesis_evaluations": [
-    {{
-      "hypothesis": "<original hypothesis text>",
-      "verdict": "<supported | partially_supported | contradicted | inconclusive>",
-      "evidence_ids": [<int, ...>],
-      "explanation": "<short justification>"
-    }}
-  ],
   "citations": [
     {{
       "claim": "<short paraphrase of a specific claim made in the analysis>",
@@ -154,9 +130,7 @@ matching exactly this schema:
 }}
 
 If the evidence is inconclusive or contains errors, reflect that with a low
-confidence score and say so explicitly in the analysis text. Include one
-entry in "hypothesis_evaluations" per candidate hypothesis given above (skip
-this list if none were generated).
+confidence score and say so explicitly in the analysis text.
 """
 
     response = _invoke_llm(prompt)
@@ -169,13 +143,11 @@ this list if none were generated).
         return {
             "analysis": raw_text,
             "confidence": 0.0,
-            "hypothesis_evaluations": [],
             "citations": [],
         }
 
     return {
         "analysis": parsed.get("analysis", raw_text),
         "confidence": float(parsed.get("confidence", 0.0)),
-        "hypothesis_evaluations": parsed.get("hypothesis_evaluations", []),
         "citations": parsed.get("citations", []),
     }

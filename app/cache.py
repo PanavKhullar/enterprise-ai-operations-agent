@@ -76,10 +76,12 @@ def get_cached_query_result(query: str) -> Optional[dict[str, Any]]:
     if cached is None:
         logger.info("cache=miss query_hash=%s", _query_key(query))
         telemetry.cache_counter.add(1, {"result": "miss"})
+        telemetry.emit_benchmark_event("cache", result="miss")
         return None
 
     logger.info("cache=hit query_hash=%s", _query_key(query))
     telemetry.cache_counter.add(1, {"result": "hit"})
+    telemetry.emit_benchmark_event("cache", result="hit")
     try:
         return json.loads(cached)
     except (TypeError, ValueError):
